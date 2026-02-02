@@ -14,7 +14,6 @@ import SparesManagement from './SparesManagement';
 import DashboardChoice from './DashboardChoice';
 import { SparesMasterListPage, SparesInPage, SparesOutPage, ViewItemPage, StockCheckPage } from './SparesManagement';
 import { Outlet } from "react-router-dom";
-import { formatDateDDMMYYYY } from './utils/date';
 
 function apiBase() {
   return 'http://localhost:8000/api';
@@ -198,29 +197,39 @@ function Dashboard() {
         <Header />
         <div className={styles.page}>
           <div className={styles.pageHeader}>
-            <div className={styles.pageTitle}>COMPLAINTS REGISTRY</div>
+            <div className={styles.pageTitle}>DASHBOARD</div>
             <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => {navigate('/choice');}}>CLOSE</button>
           </div>
           <div className={styles.cardGrid}>
             <div className={styles.card}>
-              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/item-in">ITEM IN</Link>
+              <div className={styles.cardTitle}>ITEM IN</div>
               <div className={styles.cardDesc}>Create a new incoming pass with customer and item details.</div>
+              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/item-in">OPEN</Link>
             </div>
             <div className={styles.card}>
-              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/item-out">ITEM OUT</Link>
+              <div className={styles.cardTitle}>RFC</div>
+              <div className={styles.cardDesc}>Mark items as ready for a given pass number.</div>
+              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/rfc">OPEN</Link>
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardTitle}>ITEM OUT</div>
               <div className={styles.cardDesc}>Mark items as out for a given pass number.</div>
+              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/item-out">OPEN</Link>
             </div>
             <div className={styles.card}>
-              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/search">REPORT</Link>
+              <div className={styles.cardTitle}>REPORT</div>
               <div className={styles.cardDesc}>Find records by private pass no, part no, project or date range.</div>
+              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/search">OPEN</Link>
             </div>
             <div className={styles.card}>
-              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/edit">EDIT/VIEW</Link>
+              <div className={styles.cardTitle}>EDIT/VIEW</div>
               <div className={styles.cardDesc}>Edit or delete a record by pass number.</div>
+              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/edit">OPEN</Link>
             </div>
             <div className={styles.card}>
-              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/print-sticker">PRINT STICKERS/HANDING OVER FORM</Link>
+              <div className={styles.cardTitle}>PRINT STICKERS/HANDING OVER FORM</div>
               <div className={styles.cardDesc}>Print stickers for items or form to handover for testing.</div>
+              <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/print-sticker">OPEN</Link>
             </div>
           </div>
         </div>
@@ -726,12 +735,350 @@ const fetchPartNoOptions = async (idx, equipmentType, itemName) => {
   );
 }
 
+function RFCPage() {
+  const [passNo, setPassNo] = useState('');
+  const [record, setRecord] = useState(null);
+  const [projectOptions, setProjectOptions] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const suggestionRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (suggestionRef.current && !suggestionRef.current.contains(e.target)) {
+        setShowSuggestions(false); // collapse, but keep suggestions in memory
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (passNo.length >= 2) {
+      const fetchSuggestions = async () => {
+        try {
+          const params = new URLSearchParams();
+          params.set('type', 'passNo');
+          params.set('value', passNo);
+          const res = await fetch(`${apiBase()}/search/suggestions?${params.toString()}`, { headers: { ...authHeaders() } });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data?.error || 'Failed to fetch suggestions');
+          setSuggestions(data.suggestions || []);
+        }
+        catch (err) {
+          console.error('Error fetching suggestions:', err);
+          setSuggestions([]);
+        }
+      };
+      fetchSuggestions();
+    }
+    else {
+      setSuggestions([]);
+    }
+  }, [passNo]);
+
+  useEffect(() => {
+    fetch(`${apiBase()}/admin/projects/list`, { headers: { ...authHeaders() } })
+      .then(res => res.json())
+      .then(data => setProjectOptions(data.projects || []));
+  }, []);  
+  const [status, setStatus] = useState('');
+  const navigate = useNavigate();
+
+  const clearForm = () => {
+    setPassNo('');
+    setRecord(null);
+    setStatus('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+  };
+
+  const fetchRecord = async () => {
+    if (!passNo || passNo.trim() === "") {
+      alert("Please enter a Pass No");
+      return;
+    }
+    setStatus('');
+    try {
+      console.log('=== FETCHING RECORD DEBUG ===');
+      console.log('Pass Number:', passNo);
+      console.log('Auth headers:', authHeaders());
+      
+      const res = await fetch(`${apiBase()}/items/${encodeURIComponent(passNo)}`, { headers: { ...authHeaders() } });
+      console.log('Fetch response status:', res.status);
+      
+      const data = await res.json();
+      console.log('Fetch response data:', data);
+      
+      if (!res.ok) throw new Error(data?.error || 'Not found');
+      console.log('Fetched record data:', data);
+      console.log('Items in fetched record:', data.items);
+      setRecord(data);
+    } catch (err) {
+      console.error('Error fetching record:', err);
+      setRecord(null);
+      setStatus(`Error: ${err.message}`);
+    }
+  };
+
+  const updateRfc = (idx, value) => {
+    setRecord((prev) => {
+      const newItems = prev.items.map((it, i) => {
+        if (i === idx) {
+          const updatedItem = { ...it, itemRfc: value };
+
+          // Auto-set dateOut when itemRfc is checked and no dateRfc exists
+          if (value === true && (!updatedItem.dateRfc || updatedItem.dateRfc === '')) {
+            updatedItem.dateRfc = new Date().toISOString().slice(0, 10);
+          }
+          // Clear dateRfc when itemRfc is unchecked
+          else if (value === false) {
+            console.log(`Clearing dateRfc for item ${idx} since itemRfc is now false`);
+            updatedItem.dateRfc = null;
+          }
+          return updatedItem;
+        }
+        return it;
+      });
+      console.log('New items array:', newItems);
+      return { ...prev, items: newItems };
+    });
+  };
+
+  const updateDateRfc = (idx, value) => {
+    console.log(`Updating dateRfc for item ${idx} to:`, value);
+    setRecord((prev) => {
+      const newItems = prev.items.map((it, i) => {
+        if (i === idx) {
+          console.log(`Item ${idx} before update:`, it);
+          const updatedItem = { ...it, dateRfc: value };
+          console.log(`Item ${idx} after update:`, updatedItem);
+          return updatedItem;
+        }
+        return it;
+      });
+      console.log('New items array:', newItems);
+      return { ...prev, items: newItems };
+    });
+  };
+
+  const updateRectificationDetails = (idx, value) => {
+    setRecord((prev) => ({ ...prev, items: prev.items.map((it, i) => i === idx ? { ...it, itemRectificationDetails: value } : it) }));
+  };
+
+  const updateFeedback1Details = (idx, value) => {
+    setRecord((prev) => ({ ...prev, items: prev.items.map((it, i) => i === idx ? { ...it, itemFeedback1Details: value } : it) }));
+  };
+
+  const updateFeedback2Details = (idx, value) => {
+    setRecord((prev) => ({ ...prev, items: prev.items.map((it, i) => i === idx ? { ...it, itemFeedback2Details: value } : it) }));
+  };
+
+  const onSubmit = async () => {
+    if (!record) return;
+
+    // Validate that all items marked as "rfc" have a date
+    const itemsWithoutDate = record.items.filter(item => item.itemRfc && (!item.dateRfc || item.dateRfc === ''));
+    if (itemsWithoutDate.length > 0) {
+      alert('Please set a date for all items marked as "RFC"');
+      return;
+    }
+
+    // Validate that all items marked as "rfc" have rectification details
+    const itemsWithoutDetails = record.items.filter(item => item.itemRfc && (!item.itemRectificationDetails || item.itemRectificationDetails.trim() === ''));
+    if (itemsWithoutDetails.length > 0) {
+      alert('Please enter rectification details for all items marked as "RFC"');
+      return;
+    }
+
+    // Confirm submission
+    const confirmSubmit = window.confirm('Are you sure you want to update this record?');
+    if (!confirmSubmit) {
+      return;
+    }
+
+    setStatus('');
+    try {
+      // Send all items in the same order as the original record
+      // This ensures the backend can match items by position, avoiding issues with duplicate serial numbers
+      const updates = record.items.map((it) => ({ 
+        serialNumber: it.serialNumber, 
+        itemRfc: !!it.itemRfc, 
+        dateRfc: it.dateRfc || null, 
+        itemRectificationDetails: it.itemRectificationDetails || '',
+        itemFeedback1Details: it.itemFeedback1Details || '',
+        itemFeedback2Details: it.itemFeedback2Details || ''
+      }));
+
+      console.log('=== RFC SUBMISSION DEBUG ===');
+      console.log('Pass Number:', record.passNo);
+      console.log('Original record items:', record.items);
+      console.log('Submitting updates:', updates);
+      console.log('Request URL:', `${apiBase()}/items/rfc/${encodeURIComponent(record.passNo)}`);
+      console.log('Request payload:', JSON.stringify({ items: updates }, null, 2));
+
+      const res = await fetch(`${apiBase()}/items/rfc/${encodeURIComponent(record.passNo)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ items: updates })
+      });
+
+      console.log('Response status:', res.status);
+      console.log('Response headers:', Object.fromEntries(res.headers.entries()));
+
+      const data = await res.json();
+      console.log('Response data:', data);
+
+      if (!res.ok) throw new Error(data?.error || 'Failed');
+
+      alert('Record updated successfully!');
+      setStatus('Updated');
+      clearForm();
+    } catch (err) {
+      console.error('Error in ItemRFC submission:', err);
+      alert(`Error: ${err.message}`);
+      setStatus(`Error: ${err.message}`);
+    }
+  };
+
+  return(
+    <div className={styles.page} style={{ height: 'calc(100vh - 10px)', overflow: 'auto' }}>
+      <div className={styles.pageHeader}>
+        <div className={styles.pageTitle}>RFC</div>
+        <div className={styles.pageActions}>
+          <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => {navigate('/user/dashboard'); clearForm()}}>CLOSE</button>
+        </div>
+      </div>   
+      <div className={styles.card}>
+        <div className={styles.formRow}>
+          <label className={styles.label}>
+            PRIVATE PASS NO
+            <div className={styles.relativeContainer} ref={suggestionRef}>
+              <input 
+                className={styles.control} 
+                placeholder="PASS NO" 
+                value={passNo} 
+                onChange={(e) => setPassNo(e.target.value)}
+                onFocus={() => setShowSuggestions(true)} // expand again when input is focused 
+              />
+              {showSuggestions && suggestions.length > 0 && (
+                <ul className={styles.suggestionsList}>
+                  {suggestions.map((s, i) => (
+                    <li key={i} onClick={() => { setPassNo(s); setShowSuggestions(false); }}>
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </label>
+          <div className={styles.pageActions}>
+            <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={fetchRecord}>SEARCH</button>
+          </div>
+        </div>
+      </div> 
+      {record ? (
+        <div className={styles.cardRFC} style={{ marginTop: 12 }}>
+          <div className={styles.formGrid3}>
+            <div><b>PRIVATE PASS NO:</b> {record.passNo}</div>
+            <div><b>DATE IN:</b> {record.dateIn}</div>
+            <div><b>CUSTOMER:</b> {record.customer?.name}</div>
+            <div><b>PROJECT:</b> {record.projectName || ''}</div>
+            <div><b>PHONE:</b> {record.customer?.phone}</div>
+            <div><b>UNIT ADDRESS:</b> {record.customer?.unitAddress}</div>
+            <div><b>LOCATION:</b> {record.customer?.location}</div>
+          </div>
+          <div className={styles.tableWrap} style={{ marginTop: 12, maxHeight: 350, overflowY: 'auto', overflowX: 'auto' }}>
+            <table className={styles.table} style={{ minWidth: 900 }}>
+              <thead>
+                <tr>
+                  <th>TYPE</th><th>NAME</th><th>PART NO</th><th>SERIAL NO</th><th>DEFECT</th><th>RFC</th><th>RFC DATE</th><th>RECTIFICATION DETAILS</th><th>REMARKS 1</th><th>REMARKS 2</th>
+                </tr>
+              </thead>
+              <tbody>
+                {record.items?.map((it, idx) => (
+                  <tr key={idx}>
+                    <td>{it.equipmentType}</td>
+                    <td>{it.itemName}</td>
+                    <td>{it.partNumber}</td>
+                    <td>{it.serialNumber}</td>
+                    <td>{it.defectDetails}</td>
+                    {/* <td><input type="checkbox" checked={!!it.itemIn} readOnly /></td> */}
+                    <td><input type="checkbox" checked={!!it.itemRfc} disabled={it.itemOut === true} onChange={(e) => updateRfc(idx, e.target.checked)} /></td>
+                    <td>
+                      <input 
+                        type="date" 
+                        className={styles.control} 
+                        value={it.dateRfc || ''} 
+                        onChange={(e) => updateDateRfc(idx, e.target.value)}
+                        placeholder="SELECT DATE"
+                      />
+                      {!it.dateRfc && <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>NO DATE SET</div>}
+                      {it.itemRfc && !it.dateRfc && <div style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '2px' }}>⚠️ DATE REQUIRED FOR RFC</div>}
+                    </td>
+                    <td>
+                      <textarea
+                        className={styles.control}
+                        value={it.itemRectificationDetails || ""}
+                        onChange={(e) => updateRectificationDetails(idx, e.target.value)}
+                        required={it.itemRfc}
+                        rows={1} // looks like an input initially
+                      />
+                      {it.itemRfc &&
+                        (!it.itemRectificationDetails ||
+                          it.itemRectificationDetails.trim() === "") && (
+                          <div
+                            style={{
+                              fontSize: "0.75rem",
+                              color: "#ff6b6b",
+                              marginTop: "2px",
+                            }}
+                          >
+                            ⚠️ Rectification details required for RFC
+                          </div>
+                        )}
+                    </td>
+                    <td>
+                      <textarea
+                        className={styles.control}
+                        value={it.itemFeedback1Details || ""}
+                        onChange={(e) => updateFeedback1Details(idx, e.target.value)}
+                        rows={1} // looks like an input initially
+                      />
+                    </td>
+                    <td>
+                      <textarea
+                        className={styles.control}
+                        value={it.itemFeedback2Details || ""}
+                        onChange={(e) => updateFeedback2Details(idx, e.target.value)}
+                        rows={1} // looks like an input initially
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className={styles.pageActions} style={{ marginTop: 12 }}>
+            <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={onSubmit}>Save</button>
+          </div>
+        </div>
+      ) : null}
+      {status ? <div className={styles.card} style={{ marginTop: 12, padding: 12 }}>{status}</div> : null}
+    </div>
+  );
+}
+
 function ItemOutPage() {
   const [passNo, setPassNo] = useState('');
   const [record, setRecord] = useState(null);
   const [projectOptions, setProjectOptions] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [originalRecord, setOriginalRecord] = useState(null); // Store original DB state to check what was already saved
 
   const suggestionRef = useRef(null);
 
@@ -783,12 +1130,17 @@ function ItemOutPage() {
   const clearForm = () => {
     setPassNo('');
     setRecord(null);
+    setOriginalRecord(null);
     setStatus('');
     setSuggestions([]);
     setShowSuggestions(false);
   };
 
   const fetchRecord = async () => {
+    if (!passNo || passNo.trim() === "") {
+      alert("Please enter a Pass No");
+      return;
+    }
     setStatus('');
     try {
       console.log('=== FETCHING RECORD DEBUG ===');
@@ -804,10 +1156,13 @@ function ItemOutPage() {
       if (!res.ok) throw new Error(data?.error || 'Not found');
       console.log('Fetched record data:', data);
       console.log('Items in fetched record:', data.items);
+      const dataCopy = JSON.parse(JSON.stringify(data));
       setRecord(data);
+      setOriginalRecord(dataCopy);
     } catch (err) {
       console.error('Error fetching record:', err);
       setRecord(null);
+      setOriginalRecord(null);
       setStatus(`Error: ${err.message}`);
     }
   };
@@ -857,15 +1212,6 @@ function ItemOutPage() {
   const updateRectificationDetails = (idx, value) => {
     setRecord((prev) => ({ ...prev, items: prev.items.map((it, i) => i === idx ? { ...it, itemRectificationDetails: value } : it) }));
   };
-  
-  const updateHandedOverTo = (idx, value) => {
-    setRecord((prev) => ({
-      ...prev,
-      items: prev.items.map((it, i) =>
-        i === idx ? { ...it, handedOverTo: value } : it
-      ),
-    }));
-  };
 
   const updateFeedback1Details = (idx, value) => {
     setRecord((prev) => ({ ...prev, items: prev.items.map((it, i) => i === idx ? { ...it, itemFeedback1Details: value } : it) }));
@@ -892,15 +1238,6 @@ function ItemOutPage() {
       return;
     }
     
-    const itemsWithoutHandedOver = record.items.filter(
-      item => item.itemOut && (!item.handedOverTo || item.handedOverTo.trim() === '')
-    );
-
-    if (itemsWithoutHandedOver.length > 0) {
-      alert('Please enter Handed Over To for all Item Out entries');
-      return;
-    }
-
     // Confirm submission
     const confirmSubmit = window.confirm('Are you sure you want to update this record?');
     if (!confirmSubmit) {
@@ -915,7 +1252,6 @@ function ItemOutPage() {
         serialNumber: it.serialNumber, 
         itemOut: !!it.itemOut, 
         dateOut: it.dateOut || null, 
-        handedOverTo: it.handedOverTo || '',
         itemRectificationDetails: it.itemRectificationDetails || '',
         itemFeedback1Details: it.itemFeedback1Details || '',
         itemFeedback2Details: it.itemFeedback2Details || ''
@@ -942,6 +1278,23 @@ function ItemOutPage() {
       
       if (!res.ok) throw new Error(data?.error || 'Failed');
       
+      // Fetch the updated record from DB to update originalRecord with the saved state
+      try {
+        const refetchRes = await fetch(`${apiBase()}/items/${encodeURIComponent(record.passNo)}`, { headers: { ...authHeaders() } });
+        if (refetchRes.ok) {
+          const refetchedData = await refetchRes.json();
+          console.log('Refetched data after save:', refetchedData);
+          const refetchedCopy = JSON.parse(JSON.stringify(refetchedData));
+          setRecord(refetchedData);
+          setOriginalRecord(refetchedCopy); // Set originalRecord to the new DB state - this disables checkboxes
+          console.log('Updated originalRecord:', refetchedCopy);
+        } else {
+          console.warn('Refetch failed with status:', refetchRes.status);
+        }
+      } catch (err) {
+        console.error('Error refetching record after save:', err);
+      }
+      
       alert('Record updated successfully!');
       setStatus('Updated');
       clearForm();
@@ -953,20 +1306,14 @@ function ItemOutPage() {
   };
 
   return (
-    <div className={styles.page}>
+    <div className={styles.page} style={{ height: 'calc(100vh - 10px)', overflow: 'auto' }}>
       <div className={styles.pageHeader}>
         <div className={styles.pageTitle}>ITEM OUT</div>
         <div className={styles.pageActions}>
           <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => {navigate('/user/dashboard'); clearForm()}}>CLOSE</button>
         </div>
       </div>
-      <form
-        className={styles.card}
-        onSubmit={(e) => {
-          e.preventDefault();
-          fetchRecord();
-        }}
-      >
+      <div className={styles.card}>
         <div className={styles.formRow}>
           <label className={styles.label}>
             PRIVATE PASS NO
@@ -990,15 +1337,15 @@ function ItemOutPage() {
             </div>
           </label>
           <div className={styles.pageActions}>
-            <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`}>SEARCH</button>
+            <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={fetchRecord}>SEARCH</button>
           </div>
         </div>
-      </form>
+      </div>
       {record ? (
         <div className={styles.cardItemOut} style={{ marginTop: 12 }}>
           <div className={styles.formGrid3}>
             <div><b>PRIVATE PASS NO:</b> {record.passNo}</div>
-            <div><b>DATE IN:</b> {formatDateDDMMYYYY(record.dateIn)}</div>
+            <div><b>DATE IN:</b> {record.dateIn}</div>
             <div><b>CUSTOMER:</b> {record.customer?.name}</div>
             <div><b>PROJECT:</b> {record.projectName || ''}</div>
             <div><b>PHONE:</b> {record.customer?.phone}</div>
@@ -1009,85 +1356,59 @@ function ItemOutPage() {
             <table className={styles.table} style={{ minWidth: 900 }}>
               <thead>
                 <tr>
-                  <th>TYPE</th><th>NAME</th><th>PART NO</th><th>SERIAL NO</th><th>DEFECT</th><th>ITEMOUT</th><th>DATE OUT</th><th>RECTIFICATION DETAILS</th><th>HANDED OVER TO</th><th>REMARKS 1</th><th>REMARKS 2</th>
+                  <th>TYPE</th><th>NAME</th><th>PART NO</th><th>SERIAL NO</th><th>DEFECT</th><th>RECTIFICATION DETAILS</th><th>ITEMOUT</th><th>DATE OUT</th><th>REMARKS 1</th><th>REMARKS 2</th>
                 </tr>
               </thead>
               <tbody>
-                {record.items?.map((it, idx) => (
-                  <tr key={idx}>
-                    <td>{it.equipmentType}</td>
-                    <td>{it.itemName}</td>
-                    <td>{it.partNumber}</td>
-                    <td>{it.serialNumber}</td>
-                    <td>{it.defectDetails}</td>
-                    {/* <td><input type="checkbox" checked={!!it.itemIn} readOnly /></td> */}
-                    <td><input type="checkbox" checked={!!it.itemOut} onChange={(e) => updateItemOut(idx, e.target.checked)} /></td>
-                    <td>
-                      <input 
-                        type="date" 
-                        className={styles.control} 
-                        value={it.dateOut || ''} 
-                        onChange={(e) => updateDateOut(idx, e.target.value)}
-                        placeholder="SELECT DATE"
-                      />
-                      {!it.dateOut && <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>NO DATE SET</div>}
-                      {it.itemOut && !it.dateOut && <div style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '2px' }}>⚠️ DATE REQUIRED FOR ITEM OUT</div>}
-                    </td>
-                    <td>
-                      <textarea
-                        className={styles.control}
-                        value={it.itemRectificationDetails || ""}
-                        onChange={(e) => updateRectificationDetails(idx, e.target.value)}
-                        required={it.itemOut}
-                        rows={1} // looks like an input initially
-                      />
-                      {it.itemOut &&
-                        (!it.itemRectificationDetails ||
-                          it.itemRectificationDetails.trim() === "") && (
-                          <div
-                            style={{
-                              fontSize: "0.75rem",
-                              color: "#ff6b6b",
-                              marginTop: "2px",
-                            }}
-                          >
-                            ⚠️ Rectification details required for Item Out
-                          </div>
-                        )}
-                    </td>
-                     <td>
-                      <input
-                        type="text"
-                        className={styles.control}
-                        placeholder="Handed over to"
-                        value={it.handedOverTo || ""}
-                        onChange={(e) => updateHandedOverTo(idx, e.target.value)}
-                        disabled={!it.itemOut}
-                      />
-                      {it.itemOut && (!it.handedOverTo || it.handedOverTo.trim() === "") && (
-                        <div style={{ fontSize: "0.75rem", color: "#ff6b6b" }}>
-                          ⚠️ Required for Item Out
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <textarea
-                        className={styles.control}
-                        value={it.itemFeedback1Details || ""}
-                        onChange={(e) => updateFeedback1Details(idx, e.target.value)}
-                        rows={1} // looks like an input initially
-                      />
-                    </td>
-                    <td>
-                      <textarea
-                        className={styles.control}
-                        value={it.itemFeedback2Details || ""}
-                        onChange={(e) => updateFeedback2Details(idx, e.target.value)}
-                        rows={1} // looks like an input initially
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {record.items?.map((it, idx) => {
+                  const rowDisabled = !it.itemRfc;
+                  // Disable only if it was ALREADY itemOut=true in the ORIGINAL DB state (before user edits)
+                  const itemOutLocked = originalRecord?.items?.[idx]?.itemOut === true;
+                  return (
+                    <tr key={idx}
+                      style={{
+                        opacity: rowDisabled ? 0.5 : 1,
+                        pointerEvents: rowDisabled ? "none" : "auto"
+                      }}
+                    >
+                      <td>{it.equipmentType}</td>
+                      <td>{it.itemName}</td>
+                      <td>{it.partNumber}</td>
+                      <td>{it.serialNumber}</td>
+                      <td>{it.defectDetails}</td>
+                      <td>{it.itemRectificationDetails || "-"}</td>
+                      {/* <td><input type="checkbox" checked={!!it.itemIn} readOnly /></td> */}
+                      <td><input type="checkbox" checked={!!it.itemOut} disabled={itemOutLocked} onChange={(e) => updateItemOut(idx, e.target.checked)} /></td>
+                      <td>
+                        <input 
+                          type="date" 
+                          className={styles.control} 
+                          value={it.dateOut || ''} 
+                          onChange={(e) => updateDateOut(idx, e.target.value)}
+                          placeholder="SELECT DATE"
+                        />
+                        {!it.dateOut && <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>NO DATE SET</div>}
+                        {it.itemOut && !it.dateOut && <div style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '2px' }}>⚠️ DATE REQUIRED FOR ITEM OUT</div>}
+                      </td>
+                      <td>
+                        <textarea
+                          className={styles.control}
+                          value={it.itemFeedback1Details || ""}
+                          onChange={(e) => updateFeedback1Details(idx, e.target.value)}
+                          rows={1} // looks like an input initially
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          className={styles.control}
+                          value={it.itemFeedback2Details || ""}
+                          onChange={(e) => updateFeedback2Details(idx, e.target.value)}
+                          rows={1} // looks like an input initially
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1550,7 +1871,7 @@ function ManageProjects() {
 function SearchPage() {
   const [type, setType] = useState('passNo');
   const [fstatus, setFStatus] = useState('All');
-  const [value, setValue] = useState([]);
+  const [value, setValue] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [result, setResult] = useState(null);
@@ -1561,37 +1882,8 @@ function SearchPage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [projectOptions, setProjectOptions] = useState([]);
   const suggestionRef = useRef(null);
-  const [projectValue, setProjectValue] = useState([]);
-  const [downloadFormat, setDownloadFormat] = useState('csv'); // 'csv' or 'pdf'
+  const [projectValue, setProjectValue] = useState('');
   // const {MultiSelectAutocomplete} = formElements;
-  const COLUMNS = [
-  { key: "serialNo", label: "SL NO.", default: true },
-  { key: "passNo", label: "PASS NO", default: true },
-  { key: "projectName", label: "PROJECT NAME", default: false },
-  { key: "customerName", label: "CUSTOMER NAME", default: false },
-
-  { key: "unitAddress", label: "CUSTOMER UNIT ADDRESS", default: false },
-  { key: "location", label: "CUSTOMER LOCATION", default: true },
-  { key: "phone", label: "CUSTOMER PHONE", default: false },
-
-  { key: "equipmentType", label: "EQUIPMENT TYPE", default: false },
-  { key: "itemName", label: "ITEM NAME", default: true },
-  { key: "partNumber", label: "PART NUMBER", default: true },
-  { key: "serialNumber", label: "SERIAL NUMBER", default: true },
-
-  { key: "defectDetails", label: "DEFECT DETAILS", default: true },
-  { key: "status", label: "STATUS", default: true },
-  { key: "dateIn", label: "DATE IN", default: true },
-  { key: "dateOut", label: "DATE OUT", default: true },
-
-  { key: "rectification", label: "RECTIFICATION DETAILS", default: false },
-  { key: "handedOverTo", label: "HANDED OVER TO", default: false },
-  { key: "itemFeedback1Details", label: "REMARKS 1", default: false },
-  { key: "itemFeedback2Details", label: "REMARKS 2", default: false },
-  { key: "createdBy", label: "CREATED BY", default: false },
-  { key: "updatedBy", label: "UPDATED BY", default: false },
-  ];
-  const [visibleColumns, setVisibleColumns] = useState(COLUMNS.filter(c => c.default).map(c => c.key));
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -1616,12 +1908,12 @@ function SearchPage() {
       setSuggestions([]);
       return;
     }
-    if (type !== 'ProjectName' && typeof value === 'string' && value.length >= 2) {
+    if (value.length >= 2) {
       const fetchSuggestions = async () => {
         try {
           const params = new URLSearchParams();
           params.set('type', type);
-          params.set('value', Array.isArray(value) ? value.join(',') : value);
+          params.set('value', value);
           const res = await fetch(`${apiBase()}/search/suggestions?${params.toString()}`, { headers: { ...authHeaders() } });
           const data = await res.json();
           if (!res.ok) throw new Error(data?.error || 'Failed to fetch suggestions');
@@ -1639,16 +1931,9 @@ function SearchPage() {
     }
   }, [value, type, selectionMode]);
 
-  useEffect(() => {
-    if (type === 'ProjectName') {
-      fetchProjects();
-    }
-  }, [type]);
-
-
   const clearForm = () => {
     setType('passNo');
-    setValue([]);
+    setValue('');
     setFrom('');
     setTo('');
     setResult(null);
@@ -1658,25 +1943,22 @@ function SearchPage() {
     setShowSuggestions(false);
     setProjectValue('');
   };
-  const clearOnChange = () => {
-    if (type === 'ProjectName') {
-      setValue([]);
-    } else {
-      setValue('');
-    }
+
+  const clearOnChange = () =>{
+    setValue('');
     setFrom('');
     setTo('');
     setFStatus('All');
     setProjectValue('');
-  };
+  }
 
   const runSearch = async () => {
     setStatus('');
     try {
       const params = new URLSearchParams();
       params.set('type', type);
-      if (type !== 'DateRange' && (!value || value.length === 0)) {
-        setStatus('Please select at least one value');
+      if (type !== 'DateRange' && !value) {
+        setStatus('Please enter a value');
         return;
       }
       if (type === 'DateRange' && !from && !to) {
@@ -1687,11 +1969,8 @@ function SearchPage() {
         setStatus('Please enter at least 3 characters for Serial Number search');
         return;
       }
-      if (type === 'ProjectName') {
-      value.forEach(v => params.append('value', v));
-      } else if (type !== 'DateRange' && value.length > 0) {
-      params.set('value', value);
-     }
+      if (type === 'serialNumber') params.set('serialProjectName', projectValue);
+      if (type !== 'DateRange' && value) params.set('value', value);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       params.set('status',fstatus);
@@ -1708,8 +1987,8 @@ function SearchPage() {
     try {
       const params = new URLSearchParams();
       params.set('type', type);
-      if (type !== 'DateRange' && (!value || value.length === 0)) {
-        setStatus('Please select at least one value');
+      if (type !== 'DateRange' && !value) {
+        setStatus('Please enter a value');
         return;
       }
       if (type === 'DateRange' && !from && !to) {
@@ -1720,33 +1999,18 @@ function SearchPage() {
         setStatus('Please enter at least 3 characters for Serial Number search');
         return;
       }
-      if (type === 'serialNumber'){
-        projectValue.forEach(p =>
-          params.append('serialProjectName', p)
-        );
-      }
-      if (type === 'serialNumber' && projectValue.length === 0) {
-        setStatus('Please select at least one project');
-        return;
-      }
-      if (type === 'ProjectName') {
-      value.forEach(v => params.append('value', v));
-      } else if (type !== 'DateRange' && value.length > 0) {
-      params.set('value', value);
-      }
+      if (type === 'serialNumber') params.set('serialProjectName', projectValue);
+      if (type !== 'DateRange' && value) params.set('value', value);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       params.set('status',fstatus);
-      params.set('columns', visibleColumns.join(','));
-      params.set('format', downloadFormat); 
       const res = await fetch(`${apiBase()}/search/download?${params.toString()}`, { headers: { ...authHeaders() } });
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; 
-      const ext = downloadFormat === 'pdf' ? 'pdf' : 'csv';
-      const defaultName = `${new Date().toISOString().split('T')[0]}_item_details.${ext}`;
+      const defaultName = `${new Date().toISOString().split('T')[0]}_item_details.csv`;
       a.download = defaultName;
       a.click();
       // a.download = 'search_results.csv'; a.click();
@@ -1768,14 +2032,6 @@ function SearchPage() {
     setProjectOptions(data.projects || []);
   };
 
-  const allProjectsSelectedSerialNumber =
-    projectOptions.length > 0 &&
-    projectOptions.every(p => projectValue.includes(p));
-
-  const allProjectsSelectedProjectName =
-    projectOptions.length > 0 &&
-    projectOptions.every(p => value.includes(p));
-
   // Function to render search results table
   const renderSearchResults = () => {
     if (!result || !result.data || result.data.length === 0) {
@@ -1787,128 +2043,77 @@ function SearchPage() {
         <div style={{ marginBottom: 12 }}>
           <h3>SEARCH RESULTS ({result.count} ENTRIES FOUND)</h3>
         </div>
-        <div style={{ marginBottom: 12 }}>
-          <b>Select Columns</b>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: 6 }}>
-            {COLUMNS.map(col => (
-              <label key={col.key} style={{ fontSize: "0.85rem" }}>
-                <input
-                   type="checkbox"
-                   checked={visibleColumns.includes(col.key)}
-                   onChange={(e) => {
-                    if (e.target.checked) {
-                      setVisibleColumns(prev => [...prev, col.key]);
-                    } else {
-                      setVisibleColumns(prev =>
-                        prev.filter(c => c !== col.key)
-                      );
-                    }
-                   }}
-                />{" "}
-                {col.label}
-              </label>
-            ))}
-          </div>
-        </div>
         <div className={styles.tableWrap} style={{ overflowX: 'auto', maxHeight: 450, overflowY: 'auto', overflowX: 'auto' }}>
           <table className={styles.table} style={{ minWidth: '1400px' }}>
             <thead>
               <tr>
-                {COLUMNS
-                  .filter(col => visibleColumns.includes(col.key))
-                  .map(col => (
-                    <th key={col.key}>{col.label}</th>
-                  ))}
+                <th>SL NO.</th>
+                <th>PASS NO</th>
+                <th>PROJECT NAME</th>
+                <th>CUSTOMER NAME</th>
+                <th>CUSTOMER UNIT ADDRESS</th>
+                <th>CUSTOMER LOCATION</th>
+                <th>CUSTOMER PHONE</th>
+                <th>EQUIPMENT TYPE</th>
+                <th>ITEM NAME</th>
+                <th>PART NUMBER</th>
+                <th>SERIAL NUMBER</th>
+                <th>DEFECT DETAILS</th>
+                <th>STATUS</th>
+                <th>DATE IN</th>
+                <th>DATE RFC</th>
+                <th>DATE OUT</th>
+                <th>RECTIFICATION DETAILS</th>
+                <th>REMARKS 1 </th>
+                <th>REMARKS 2 </th>
+                <th>CREATED BY</th>
+                <th>UPDATED BY</th>
               </tr>
             </thead>
             <tbody>
               {result.data.map((doc, docIndex) => {
                 const items = doc.items || [];
-
                 return items.map((item, itemIndex) => {
-                  let statusVal = "IN";
-                  if (item.itemIn && item.itemOut) statusVal = "OUT";
-                  else if (item.rfc && !item.itemOut) statusVal = "RFC";
-
-                  const dateIn = doc.dateIn || "";
-                  const dateOut = item.dateOut || "";
+                  // Determine status: OUT if all itemIn, itemRfc, and itemOut are true, else IN
+                  const status = item.itemIn && item.itemOut ? "OUT" : item.itemIn && item.itemRfc && !item.itemOut ? "RFC" : "IN";
+                  
+                  // Format phone number properly
                   const phone = doc.customer?.phone || "";
-
+                  const formattedPhone = phone && !isNaN(phone) ? String(phone) : phone;
+                  
+                  // Format dates
+                  const dateIn = doc.dateIn || "";
+                  const dateRfc = item.dateRfc || "";
+                  const dateOut = item.dateOut || "";
+                  
                   return (
                     <tr key={`${docIndex}-${itemIndex}`}>
-                      {COLUMNS
-                        .filter(col => visibleColumns.includes(col.key))
-                        .map(col => {
-                          switch (col.key) {
-                            case "serialNo":
-                              return <td key={col.key}>{item.serialNo || ""}</td>;
-
-                            case "passNo":
-                              return <td key={col.key}>{doc.passNo || ""}</td>;
-
-                            case "projectName":
-                              return <td key={col.key}>{doc.projectName || ""}</td>;
-
-                            case "customerName":
-                              return <td key={col.key}>{doc.customer?.name || ""}</td>;
-
-                            case "unitAddress":
-                              return <td key={col.key}>{doc.customer?.unitAddress || ""}</td>;
-
-                            case "location":
-                              return <td key={col.key}>{doc.customer?.location || ""}</td>;
-
-                            case "phone":
-                              return <td key={col.key}>{phone}</td>;
-
-                            case "equipmentType":
-                              return <td key={col.key}>{item.equipmentType || ""}</td>;
-
-                            case "itemName":
-                              return <td key={col.key}>{item.itemName || ""}</td>;
-
-                            case "partNumber":
-                              return <td key={col.key}>{item.partNumber || ""}</td>;
-
-                            case "serialNumber":
-                              return <td key={col.key}>{item.serialNumber || ""}</td>;
-
-                            case "defectDetails":
-                              return <td key={col.key}>{item.defectDetails || ""}</td>;
-
-                            case "status":
-                              return <td key={col.key}>{statusVal}</td>;
-
-                            case "dateIn":
-                              return <td key={col.key}>{formatDateDDMMYYYY(dateIn)}</td>;
-
-                            case "dateOut":
-                              return <td key={col.key}>{formatDateDDMMYYYY(dateOut)}</td>;
-
-                            case "rectification":
-                              return <td key={col.key}>{item.itemRectificationDetails || ""}</td>;
-                            case "remarks1":
-                              return <td key={col.key}>{item.itemFeedback1Details || ""}</td>;
-
-                            case "remarks2":
-                              return <td key={col.key}>{item.itemFeedback2Details || ""}</td>;
-
-                            case "createdBy":
-                              return <td key={col.key}>{doc.createdBy || ""}</td>;
-
-                            case "updatedBy":
-                              return <td key={col.key}>{doc.updatedBy || ""}</td>;
-
-                            default:
-                              return <td key={col.key}></td>;
-                          }
-                        })}
+                      <td>{item.serialNo || ""}</td>
+                      <td>{doc.passNo || ""}</td>
+                      <td>{doc.projectName || ""}</td>
+                      <td>{doc.customer?.name || ""}</td>
+                      <td>{doc.customer?.unitAddress || ""}</td>
+                      <td>{doc.customer?.location || ""}</td>
+                      <td>{formattedPhone}</td>
+                      <td>{item.equipmentType || ""}</td>
+                      <td>{item.itemName || ""}</td>
+                      <td>{item.partNumber || ""}</td>
+                      <td>{item.serialNumber || ""}</td>
+                      <td>{item.defectDetails || ""}</td>
+                      <td>{status}</td>
+                      <td>{dateIn}</td>
+                      <td>{dateRfc}</td>
+                      <td>{dateOut}</td>
+                      <td style={{textAlign: 'left'}}>{item.itemRectificationDetails || ""}</td>
+                      <td style={{textAlign: 'left'}}>{item.itemFeedback1Details || ""}</td>
+                      <td style={{textAlign: 'left'}}>{item.itemFeedback2Details || ""}</td>
+                      <td>{doc.createdBy || ""}</td>
+                      <td>{doc.updatedBy || ""}</td>
                     </tr>
                   );
                 });
               })}
             </tbody>
-
           </table>
         </div>
       </div>
@@ -1923,13 +2128,7 @@ function SearchPage() {
           <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => {navigate('/user/dashboard'); clearForm()}}>CLOSE</button>
         </div>
       </div>
-      <form
-        className={styles.card}
-        onSubmit={(e) => {
-          e.preventDefault();
-          runSearch();
-        }}
-      >
+      <div className={styles.card}>
         <div className={styles.formGrid3}>
           <label className={styles.label}>TYPE
             <select
@@ -1948,48 +2147,20 @@ function SearchPage() {
 
             <label className={styles.label}>
               {type === 'passNo' ? 'PRIVATE PASS NO' : type === 'ItemPartNo' ? 'PART NO' : type === 'serialNumber' ? 'SERIAL NUMBER' : 'PROJECT NAME'}
-              {type === 'ProjectName' ? (
-                <div
-                  className={styles.checkboxGroup}
-                  onFocus={fetchProjects}
-                >
-                  <label className={styles.checkboxItem} style={{ fontWeight: '600' }}>
-                    <input
-                      type="checkbox"
-                      checked={allProjectsSelectedProjectName}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setValue([...projectOptions]);
-                        } else {
-                          setValue([]);
-                        }
-                      }}
-                    />
-                    Select All
-                  </label>
-                  {projectOptions.map((p, idx) => (
-                    <label key={idx} className={styles.checkboxItem}>
-                      <input
-                        type="checkbox"
-                        value={p}
-                        checked={value.includes(p)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setValue([...value, p]);
-                          } else {
-                            setValue(value.filter(v => v !== p));
-                          }
-                        }}
-                      />
-                      {p}
-                    </label>
-                  ))}
-                </div>
-              ) : 
+              {type === 'ProjectName' ?
+                <select 
+                  className={styles.control} 
+                  value={value} 
+                  onChange={(e) => {setValue(e.target.value)}}
+                  onFocus={fetchProjects} required>
+                  <option value="">SELECT PROJECT</option>
+                  {projectOptions.map((p, idx) => <option key={idx} value={p}>{p}</option>)}
+                </select>
+                :
                 <div className={styles.relativeContainer} ref={suggestionRef}>
                   <input
                     className={styles.control}
-                    value={Array.isArray(value) ? value.join(', ') : value}
+                    value={value}
                     onFocus={() => setShowSuggestions(true)} // expand again when input is focused
                     onChange={(e) => setValue(e.target.value)}
                   />
@@ -2011,12 +2182,6 @@ function SearchPage() {
               className={styles.control}
               value={fstatus}
               onChange={(e) => setFStatus(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  runSearch();
-                }
-              }}
             >
               <option value = "All">ALL</option>
               <option value = "In">IN</option>
@@ -2026,42 +2191,18 @@ function SearchPage() {
           </label>
           {type === 'serialNumber' && (
             <label className={styles.label}>PROJECT NAME
-              <div
-                className={styles.checkboxGroup}
+              <select
+                className={styles.control}
+                value={projectValue}
+                onChange={(e) => setProjectValue(e.target.value)}
                 onFocus={fetchProjects}
+                required
               >
-                <label className={styles.checkboxItem} style={{ fontWeight: '600' }}>
-                  <input
-                    type="checkbox"
-                    checked={allProjectsSelectedSerialNumber}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setProjectValue([...projectOptions]);
-                      } else {
-                        setProjectValue([]);
-                      }
-                    }}
-                  />
-                  Select All
-                </label>
+                <option value="">SELECT PROJECT</option>
                 {projectOptions.map((p, idx) => (
-                  <label key={idx} className={styles.checkboxItem}>
-                    <input
-                      type="checkbox"
-                      value={p}
-                      checked={projectValue.includes(p)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setProjectValue([...projectValue, p]);
-                        } else {
-                          setProjectValue(projectValue.filter(v => v !== p));
-                        }
-                      }}
-                    />
-                    {p}
-                  </label>
+                  <option key={idx} value={p}>{p}</option>
                 ))}
-              </div>
+              </select>
             </label>
           )}
           {type != 'passNo' && type != 'serialNumber' && (
@@ -2072,9 +2213,8 @@ function SearchPage() {
           )}
         </div>
         <div className={styles.pageActions}>
-          <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`}>VIEW ALL RECORDS</button>
-          <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={() => { setDownloadFormat('csv'); download(); }}>Download CSV</button>
-          <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={() => { setDownloadFormat('pdf'); download(); }}>Download PDF</button>
+          <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={runSearch}>VIEW ALL RECORDS</button>
+          <button className={`${styles.btn} ${styles.btnGhost}`} onClick={download}>DOWNLOAD REPORT</button>
           <button
             type="button"
             className={`${styles.btn} ${styles.btnPrimary} ${styles.resetBtn}`}
@@ -2084,7 +2224,7 @@ function SearchPage() {
           </button>
         </div>
         {status ? <div style={{ marginTop: 12 }}>{status}</div> : null}
-      </form>
+      </div>
       
       {/* Display search results table */}
       {/* {renderSearchResults()} */}
@@ -2297,8 +2437,9 @@ function EditPage() {
       partNoOptions: [],
       itemIn: src.itemIn ?? true,
       itemOut: false,
-      rfc: false,
-      dateOut: null
+      itemRfc: false,
+      dateOut: null,
+      dateRfc: null
     };
 
     const newItems = [...items.slice(0, idx + 1), newRow, ...items.slice(idx + 1)];
@@ -2363,15 +2504,7 @@ function EditPage() {
       console.log('Fetched record data:', data);
       console.log('Items in fetched record:', data.items);
       setDoc(data);
-      const fixedItems = (data.items || []).map(item => {
-        if (item.itemOut === true && item.rfc === undefined) {
-          return { ...item, rfc: true };
-        }
-        return item;
-      });
-      const fixedData = { ...data, items: fixedItems };
-      setDoc(fixedData);
-      setPrevData(fixedData);
+      setPrevData(data); // Store original data for change detection
       setIsEditing(false); // Reset to readonly mode when fetching new record
     } catch (err) {
       console.error('Error fetching record:', err);
@@ -2414,6 +2547,16 @@ function EditPage() {
             console.log(`Clearing dateOut for item ${idx} since itemOut is now false`);
             updatedItem.dateOut = null;
           }
+
+          // Auto-set dateRfc when itemRfc is checked and no dateRfc exists
+          if (key === 'itemRfc' && value === true && (!updatedItem.dateRfc || updatedItem.dateRfc === '')) {
+            updatedItem.dateRfc = new Date().toISOString().slice(0, 10);
+          }
+          // Clear dateRfc when itemRfc is unchecked
+          else if (key === 'itemRfc' && value === false) {
+            console.log(`Clearing dateRfc for item ${idx} since itemRfc is now false`);
+            updatedItem.dateRfc = null;
+          }
           
           return updatedItem;
         }
@@ -2425,7 +2568,7 @@ function EditPage() {
   };
 
   const addItem = () => {
-    setDoc((prev) => ({ ...prev, items: [...prev.items, { equipmentType: '', itemName: '', partNumber: '', serialNumber: '', defectDetails: '', itemIn: true, itemOut: false, rfc: false, dateOut: null, itemRectificationDetails: '', itemFeedback1Details: '', itemFeedback2Details: ''}] }));
+    setDoc((prev) => ({ ...prev, items: [...prev.items, { equipmentType: '', itemName: '', partNumber: '', serialNumber: '', defectDetails: '', itemIn: true, itemOut: false, itemRfc: false, dateOut: null, dateRfc: null, itemRectificationDetails: '', itemFeedback1Details: '', itemFeedback2Details: ''}] }));
   };
 
   const deleteItem = (idx) => {
@@ -2458,25 +2601,9 @@ function EditPage() {
       return;
     }
     
-    const itemsWithoutDetails = doc.items.filter(item => item.itemOut && (!item.itemRectificationDetails || item.itemRectificationDetails.trim() === ''));
+    const itemsWithoutDetails = doc.items.filter(item => item.itemRfc && (!item.itemRectificationDetails || item.itemRectificationDetails.trim() === ''));
     if (itemsWithoutDetails.length > 0) {
-      alert('Please enter rectification details for all items marked as "Item Out"');
-      return;
-    }
-
-    const invalidOutItems = doc.items.filter((item, idx) => {
-      const prevItem = prevData.items?.[idx];
-
-      // Validate only if itemOut is newly checked
-      return (
-        item.itemOut &&
-        !item.rfc &&
-        (!prevItem || prevItem.itemOut !== true)
-      );
-    });
-
-    if (invalidOutItems.length > 0) {
-      alert('Item Out can be marked only after RFC');
+      alert('Please enter rectification details for all items marked as "Item RFC"');
       return;
     }
 
@@ -2546,13 +2673,7 @@ function EditPage() {
           <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => {navigate('/user/dashboard'); clearForm()}}>CLOSE</button>
         </div>
       </div>
-      <form
-        className={styles.card}
-        onSubmit={(e) => {
-          e.preventDefault();
-          fetchDoc();
-        }}
-      >
+      <div className={styles.card}>
         <div className={styles.formRow}>
           <label className={styles.label}>
             PRIVATE PASS NO
@@ -2576,10 +2697,10 @@ function EditPage() {
             </div>
           </label>
           <div className={styles.pageActions}>
-            <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`}>DISPLAY</button>
+            <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={fetchDoc}>DISPLAY</button>
           </div>
         </div>
-      </form>
+      </div>
       {doc?.projectName ? (
         <div className={styles.cardEdit} style={{ marginTop: 12 }}>
           <div className={styles.pageActions} style={{ marginBottom: 16 }}>
@@ -2629,136 +2750,135 @@ function EditPage() {
               <table className={styles.table} style={{ minWidth: '1200px' }}>
                 <thead>
                   <tr>
-                    <th>ITEM TYPE</th><th>ITEM NAME</th><th>PART NO</th><th>SERIAL NO</th><th>DEFECT</th><th>ITEMOUT</th><th>RFC</th><th>DATE OUT</th><th>RECTIFICATION DETAILS</th><th>REMARKS 1 DETAILS</th><th>REMARKS 2 DETAILS</th>
+                    <th>ITEM TYPE</th><th>ITEM NAME</th><th>PART NO</th><th>SERIAL NO</th><th>DEFECT</th><th>ITEMOUT</th><th>RFC</th><th>DATE OUT</th><th>DATE RFC</th><th>RECTIFICATION DETAILS</th><th>REMARKS 1 DETAILS</th><th>REMARKS 2 DETAILS</th>
                     {isEditing && <th style={{ minWidth: '100px', textAlign: 'center' }}>Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {doc?.items?.map((it, idx) => {
-                    const prevItem = prevData.items?.[idx] || {};
-                    const rfcLocked = prevItem.rfc === true;
-                    const itemOutLocked = prevItem.itemOut === true;
-                    return (
-                      <tr key={idx}>
-                        <td>
-                          <select
+                  {doc?.items?.map((it, idx) => (
+                    <tr key={idx}>
+                      <td>
+                        <select
+                          className={styles.control}
+                          value={it.equipmentType || ''}
+                          onFocus={() => fetchItemTypeOptions(idx)}
+                          onChange={e => updateItem(idx, 'equipmentType', e.target.value)}
+                        >
+                          <option value="">SELECT TYPE</option>
+                          {it.itemTypeOptions?.map((t, i) => <option key={i} value={t}>{t}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          className={styles.control}
+                          value={it.itemName || ''}
+                          onFocus={() => fetchItemNameOptions(idx, it.equipmentType)}
+                          onChange={e => updateItem(idx, 'itemName', e.target.value)}
+                        >
+                          <option value="">SELECT NAME</option>
+                          {it.itemNameOptions?.map((n, i) => <option key={i} value={n}>{n}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          className={styles.control}
+                          value={it.partNumber || ''}
+                          onFocus={() => fetchPartNoOptions(idx, it.equipmentType, it.itemName)}
+                          onChange={e => updateItem(idx, 'partNumber', e.target.value)}
+                        >
+                          <option value="">SELECT PART</option>
+                          {it.partNoOptions?.map((p, i) => <option key={i} value={p}>{p}</option>)}
+                        </select>
+                      </td>
+                      <td><input className={styles.control} value={(it.serialNumber || '').toUpperCase()} onChange={(e) => updateItem(idx, 'serialNumber', e.target.value)} readOnly={!isEditing} required /></td>
+                      <td><input className={styles.control} value={it.defectDetails || ''} onChange={(e) => updateItem(idx, 'defectDetails', e.target.value)} readOnly={!isEditing} /></td>
+                      <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!it.itemOut} onChange={(e) => updateItem(idx, 'itemOut', e.target.checked)} disabled={!isEditing} /></td>
+                      <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!it.itemRfc} onChange={(e) => updateItem(idx, 'itemRfc', e.target.checked)} disabled={!isEditing} /></td>
+                      <td>
+                        <input 
+                          type="date" 
+                          className={styles.control} 
+                          value={it.dateOut || ''} 
+                          onChange={(e) => updateItem(idx, 'dateOut', e.target.value)}
+                          readOnly={!isEditing}
+                        />
+                        {!it.dateOut && <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>NO DATE SET</div>}
+                        {it.itemOut && !it.dateOut && <div style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '2px' }}>⚠️ DATE REQUIRED FOR ITEM OUT</div>}
+                      </td>
+                      <td>
+                        <input 
+                          type="date" 
+                          className={styles.control} 
+                          value={it.dateRfc || ''} 
+                          onChange={(e) => updateItem(idx, 'dateRfc', e.target.value)}
+                          readOnly={!isEditing}
+                        />
+                        {!it.dateRfc && <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>NO DATE SET</div>}
+                        {it.itemRfc && !it.dateRfc && <div style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '2px' }}>⚠️ DATE REQUIRED FOR ITEM RFC</div>}
+                      </td>
+                      <td>
+                          <textarea
                             className={styles.control}
-                            value={it.equipmentType || ''}
-                            onFocus={() => fetchItemTypeOptions(idx)}
-                            onChange={e => updateItem(idx, 'equipmentType', e.target.value)}
-                          >
-                            <option value="">SELECT TYPE</option>
-                            {it.itemTypeOptions?.map((t, i) => <option key={i} value={t}>{t}</option>)}
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className={styles.control}
-                            value={it.itemName || ''}
-                            onFocus={() => fetchItemNameOptions(idx, it.equipmentType)}
-                            onChange={e => updateItem(idx, 'itemName', e.target.value)}
-                          >
-                            <option value="">SELECT NAME</option>
-                            {it.itemNameOptions?.map((n, i) => <option key={i} value={n}>{n}</option>)}
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className={styles.control}
-                            value={it.partNumber || ''}
-                            onFocus={() => fetchPartNoOptions(idx, it.equipmentType, it.itemName)}
-                            onChange={e => updateItem(idx, 'partNumber', e.target.value)}
-                          >
-                            <option value="">SELECT PART</option>
-                            {it.partNoOptions?.map((p, i) => <option key={i} value={p}>{p}</option>)}
-                          </select>
-                        </td>
-                        <td><input className={styles.control} value={(it.serialNumber || '').toUpperCase()} onChange={(e) => updateItem(idx, 'serialNumber', e.target.value)} readOnly={!isEditing} required /></td>
-                        <td><input className={styles.control} value={it.defectDetails || ''} onChange={(e) => updateItem(idx, 'defectDetails', e.target.value)} readOnly={!isEditing} /></td>
-                        <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!it.itemOut} onChange={(e) => updateItem(idx, 'itemOut', e.target.checked)} disabled={!isEditing || itemOutLocked || (!it.rfc && !it.itemOut)} /></td>
-                        <td style={{ textAlign: 'center' }}>
-                          <input
-                            type="checkbox"
-                            checked={!!it.rfc}
-                            onChange={(e) => updateItem(idx, 'rfc', e.target.checked)}
-                            disabled={!isEditing || rfcLocked || itemOutLocked}  
-                          />
-                        </td>
-                        <td>
-                          <input 
-                            type="date" 
-                            className={styles.control} 
-                            value={it.dateOut || ''} 
-                            onChange={(e) => updateItem(idx, 'dateOut', e.target.value)}
+                            value={it.itemRectificationDetails || ""}
+                            onChange={(e) => updateItem(idx, 'itemRectificationDetails', e.target.value)}
                             readOnly={!isEditing}
+                            rows={1} // looks like an input initially
                           />
-                          {!it.dateOut && <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>NO DATE SET</div>}
-                          {it.itemOut && !it.dateOut && <div style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '2px' }}>⚠️ DATE REQUIRED FOR ITEM OUT</div>}
+                          {it.itemRfc &&
+                            (!it.itemRectificationDetails ||
+                              it.itemRectificationDetails.trim() === "") && (
+                              <div
+                                style={{
+                                  fontSize: "0.75rem",
+                                  color: "#ff6b6b",
+                                  marginTop: "2px",
+                                }}
+                              >
+                                ⚠️ Rectification details required for Item RFC
+                              </div>
+                          )}
+                      </td>
+                      <td>
+                        <textarea
+                            className={styles.control}
+                            value={it.itemFeedback1Details || ""}
+                            onChange={(e) => updateItem(idx, 'itemFeedback1Details', e.target.value)}
+                            readOnly={!isEditing}
+                            rows={1} // looks like an input initially
+                          />
+                      </td>
+                      <td>
+                        <textarea
+                            className={styles.control}
+                            value={it.itemFeedback2Details || ""}
+                            onChange={(e) => updateItem(idx, 'itemFeedback2Details', e.target.value)}
+                            readOnly={!isEditing}
+                            rows={1} // looks like an input initially
+                          />
+                      </td>
+                      {isEditing && (
+                        <td style={{ textAlign: 'center', minWidth: '100px', whiteSpace: 'nowrap' }}>
+                          <button 
+                            type="button" 
+                            className={`${styles.btn} ${styles.btnGhost}`} 
+                            onClick={() => duplicateItem(idx)} 
+                            style={{ fontSize: '0.85rem', padding: '6px 12px', marginRight: 4 }}
+                          >
+                            DUPLICATE
+                          </button>
+                          <button 
+                            type="button" 
+                            className={`${styles.btn} ${styles.btnDanger}`} 
+                            onClick={() => deleteItem(idx)} 
+                            disabled={doc?.items.length === 1}
+                            style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                          >
+                            DELETE
+                          </button>
                         </td>
-                        <td>
-                            <textarea
-                              className={styles.control}
-                              value={it.itemRectificationDetails || ""}
-                              onChange={(e) => updateItem(idx, 'itemRectificationDetails', e.target.value)}
-                              readOnly={!isEditing}
-                              rows={1} // looks like an input initially
-                            />
-                            {it.itemOut &&
-                              (!it.itemRectificationDetails ||
-                                it.itemRectificationDetails.trim() === "") && (
-                                <div
-                                  style={{
-                                    fontSize: "0.75rem",
-                                    color: "#ff6b6b",
-                                    marginTop: "2px",
-                                  }}
-                                >
-                                  ⚠️ Rectification details required for Item Out
-                                </div>
-                            )}
-                        </td>
-                        <td>
-                          <textarea
-                              className={styles.control}
-                              value={it.itemFeedback1Details || ""}
-                              onChange={(e) => updateItem(idx, 'itemFeedback1Details', e.target.value)}
-                              readOnly={!isEditing}
-                              rows={1} // looks like an input initially
-                            />
-                        </td>
-                        <td>
-                          <textarea
-                              className={styles.control}
-                              value={it.itemFeedback2Details || ""}
-                              onChange={(e) => updateItem(idx, 'itemFeedback2Details', e.target.value)}
-                              readOnly={!isEditing}
-                              rows={1} // looks like an input initially
-                            />
-                        </td>
-                        {isEditing && (
-                          <td style={{ textAlign: 'center', minWidth: '100px', whiteSpace: 'nowrap' }}>
-                            <button 
-                              type="button" 
-                              className={`${styles.btn} ${styles.btnGhost}`} 
-                              onClick={() => duplicateItem(idx)} 
-                              style={{ fontSize: '0.85rem', padding: '6px 12px', marginRight: 4 }}
-                            >
-                              DUPLICATE
-                            </button>
-                            <button 
-                              type="button" 
-                              className={`${styles.btn} ${styles.btnDanger}`} 
-                              onClick={() => deleteItem(idx)} 
-                              disabled={doc?.items.length === 1}
-                              style={{ fontSize: '0.85rem', padding: '6px 12px' }}
-                            >
-                              DELETE
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
+                      )}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
               {isEditing && (
@@ -2986,6 +3106,11 @@ function App() {
         <Route path="/item-in" element={
           <ProtectedRoute requiredRole="user">
             <ItemInPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/rfc" element={
+          <ProtectedRoute requiredRole="user">
+            <RFCPage />
           </ProtectedRoute>
         } />
         <Route path="/item-out" element={
