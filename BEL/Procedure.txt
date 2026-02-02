@@ -2,13 +2,23 @@ Files:
 invent_frontend
   /src
     App.js
+  /components
+    sticker.jsx
+    styles.module.css
 inventory_management
   /myAPI
+    urls.py
     views.py
 
 copy the above files from pendrive to system
 
 goto source code VS Code invent_front_end\src\App.js
+
+function apiBase() {
+  return 'http://192.168.1.7:8000/api';
+}
+
+goto source code VS Code invent_front_end\src\components\sticker.jsx
 
 function apiBase() {
   return 'http://192.168.1.7:8000/api';
@@ -22,4 +32,5 @@ E:\BEL\inventory_management> python manage.py runserver (IP ADDRESS of local/ser
 another powershell stop (Ctrl+c) (invent_frontend)
 PS E:\BEL\invent_front_end> rm -r -fo build
 PS E:\BEL\invent_front_end>npm run build
+
 PS E:\BEL\invent_front_end>npm start
